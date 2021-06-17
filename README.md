@@ -70,7 +70,9 @@
 Веб-интерфейс Consul - `<IP ISCSI-сервера>:8500`
 
 Доступ к БД:
-Ноды db1 или db2: ``
+Ноды db1 или db2: 
+`sudo su - postgres`
+`psql -p 5433 -h /var/data/base/`
 Служба Postgresql будет отключена, так как она управляется Patroni
 node1: 
 `sudo su - postgres`
