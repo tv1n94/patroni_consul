@@ -1,0 +1,9 @@
+127.0.0.1 localhost.localdomain localhost
+127.0.0.1 localhost4.localdomain4 localhost4
+
+192.168.2.10 iscsi
+192.168.2.11 node1
+192.168.2.12 node2
+192.168.2.13 db1
+192.168.2.14 db2
+192.168.2.15 proxy

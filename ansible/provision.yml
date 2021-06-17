@@ -1,0 +1,843 @@
+- name: Base set up
+  hosts: all
+  become: yes
+  tasks:
+#  - name: modify hostname
+#    template:
+#      src: ./templates/hostname.j2
+#      dest: /etc/hostname
+#      owner: root
+#      group: root
+#      mode: '0644'
+
+  - name: disable ipv6
+    replace:
+      dest: /etc/default/grub
+      regexp: '^GRUB_CMDLINE_LINUX="(.*)"'
+      replace: 'GRUB_CMDLINE_LINUX="\1 ipv6.disable=1"'
+      mode: '0644'
+      backup: yes
+
+  - name: Regenerate GRUB config
+    shell: grub2-mkconfig -o /boot/grub2/grub.cfg
+  
+  - name: install epel-release
+    yum:
+      name: epel-release
+      state: present
+
+  - name: Install wget,unzip,vim
+    yum: 
+      name:
+        - wget
+        - unzip 
+        - vim
+      state: present
+
+  - name: reboot hosts
+    reboot:
+      reboot_timeout: 300
+
+  - name: modify hosts files for all servers
+    copy:
+      src: ./config/hosts
+      dest: /etc/hosts
+      owner: root
+      group: root
+      mode: '0777'
+  
+# ISCSI and KEEPALIVED
+- name: create iscsi target
+  hosts: iscsi
+  become: yes
+  tasks:
+  - yum: name=cronyd state=absent
+
+  - name: set timezone
+    command: /usr/bin/timedatectl set-timezone Europe/Moscow
+
+  - name: Install NTPD
+    yum: 
+      name: ntp
+      state: present
+
+  - name: Ensure NTP is running.
+    service: 
+      name: ntpd 
+      state: started 
+      enabled: yes
+
+  - name: install targetcli
+    yum: 
+      name: targetcli 
+      state: latest
+
+  - name: create fileIO for iscsi target
+    shell: targetcli /backstores/fileio create name=disk01 file_or_dev=/mnt/disk01 size=2G
+    ignore_errors: True
+    
+  - name: chmod for disk01
+    shell: chmod 777 /mnt/disk01
+    
+  - name: create IQN
+    shell: targetcli /iscsi create iqn.2021-02.ru.otus:target00
+    ignore_errors: True
+
+  - name: create and setting iscsi target
+    shell: targetcli /iscsi/iqn.2021-02.ru.otus:target00/tpg1/luns create /backstores/fileio/disk01
+    ignore_errors: True
+
+- name: ntp and create iscsi initiator
+  hosts: node1,node2
+  become: yes
+  tasks:
+  - yum: name=cronyd state=absent
+
+  - name: set timezone
+    command: /usr/bin/timedatectl set-timezone Europe/Moscow
+
+  - name: Install NTPD
+    yum: 
+      name: ntp
+      state: present
+
+  - name: Ensure NTP is running.
+    service: 
+      name: ntpd
+      state: started 
+      enabled: yes
+
+  - name: install iscsi-initiator-utils
+    yum: 
+      name: iscsi-initiator-utils 
+      state: latest
+
+  - name: chmod /etc/iscsi/initiatorname.iscsi
+    shell: /usr/bin/sudo chmod 777 /etc/iscsi/initiatorname.iscsi
+
+- name: node1 initiator
+  hosts: node1
+  become: yes
+  tasks:
+  - name: edit IQN iscsi initiator
+    shell: /usr/bin/sudo echo -e "InitiatorName=iqn.2021-02.com.redhat:node1" > /etc/iscsi/initiatorname.iscsi
+
+  - name: Check 1 path for iscsi
+    command: /usr/sbin/iscsiadm -m discovery -t st -p 192.168.2.10
+
+  - name: Check 2 path for iscsi
+    command: /usr/sbin/iscsiadm -m discovery -t st -p 192.168.3.10
+
+  - name: Check 1 and 2 path for iscsi
+    command: /usr/sbin/iscsiadm -m node
+
+- name: node2 initiator
+  hosts: node2
+  become: yes
+  tasks:
+  - name: edit IQN iscsi initiator
+    shell: /usr/bin/sudo echo -e "InitiatorName=iqn.2021-02.com.redhat:node2" > /etc/iscsi/initiatorname.iscsi
+
+  - name: Check 1 path for iscsi
+    command: /usr/sbin/iscsiadm -m discovery -t st -p 192.168.2.10
+
+  - name: Check 2 path for iscsi
+    command: /usr/sbin/iscsiadm -m discovery -t st -p 192.168.3.10
+
+  - name: Check 1 and 2 path for iscsi
+    command: /usr/sbin/iscsiadm -m node
+
+- name: Acls on iscsi target
+  hosts: iscsi
+  become: yes
+  tasks:
+  - name: allow iqn iqn.2021-02.com.redhat:node1
+    command: sudo targetcli iscsi/iqn.2021-02.ru.otus:target00/tpg1/acls/ create iqn.2021-02.com.redhat:node1
+    ignore_errors: True
+
+  - name: allow iqn iqn.2021-02.com.redhat:node2
+    command: sudo targetcli iscsi/iqn.2021-02.ru.otus:target00/tpg1/acls/ create iqn.2021-02.com.redhat:node2
+    ignore_errors: True
+
+- name: connect to iscsi target and setting pacemaker cluster
+  hosts: node1,node2
+  become: yes
+  tasks:
+
+  - name: connect to iscsi target
+    command: /usr/sbin/iscsiadm -m node -l -T iqn.2021-02.ru.otus:target00
+    ignore_errors: True
+
+  - name: install multipath
+    yum: 
+      name: device-mapper-multipath 
+      state: present
+
+  - name: Ensure NTP is running.
+    service: 
+      name: multipathd 
+      state: started 
+      enabled: yes
+
+  - name: start multipath
+    become: yes
+    command: /usr/sbin/mpathconf --enable --with_multipathd y
+
+  - name: modify hosts files for all servers
+    copy:
+      src: ./config/hosts
+      dest: /etc/hosts
+      owner: root
+      group: root
+      mode: '0777'
+
+  - name: Install pacemaker pcs fence-agents-all
+    yum: 
+      name:
+        - pacemaker
+        - pcs
+        - python3
+      state: present
+
+  - name: Ensure pcsd.service is running.
+    service: 
+      name: pcsd
+      state: started 
+      enabled: yes
+  
+  - name: Change password for user hacluster
+    user:
+      name: hacluster
+      password: "{{ 'haclusterpass' | password_hash('sha512') }}"
+      update_password: always
+    become: yes
+
+  - name: auth cluster node
+    command: pcs cluster auth node1 node2 -u hacluster -p haclusterpass
+
+  - name: create hacluster
+    command: pcs cluster setup --name hacluster node1 node2 --force
+
+  - name: enable cluster
+    command: pcs cluster enable --all
+
+  - name: start cluster
+    command: sudo pcs cluster start --all
+
+  - name: Install gfs2-utils lvm2-cluster
+    yum: 
+      name:
+        - gfs2-utils
+        - lvm2-cluster
+      state: present
+
+  - name: Enable clustered locking for LVM
+    shell: lvmconf --enable-cluster
+
+  - name: reboot nodes
+    reboot:
+  
+  - name: edit to /etc/hosts
+    copy:
+       src: ./config/hosts
+       dest: /etc/hosts
+       owner: root
+       group: root
+       mode: 0777
+
+  - name: start cluster
+    command: pcs cluster start --all
+
+- name: GFS2
+  hosts: node1
+  become: yes
+  tasks:
+  - name: Create DLM and CLVM
+    shell: |
+      pcs property set stonith-enabled=false
+      pcs property set no-quorum-policy=ignore
+      pcs resource create dlm systemd:dlm op monitor interval=30s on-fail=ignore clone interleave=true ordered=true
+      pcs resource create clvmd ocf:heartbeat:clvm op monitor interval=30s on-fail=ignore clone interleave=true ordered=true
+      pcs constraint order start dlm-clone then clvmd-clone
+  
+  - name: Create FS
+    shell: pvcreate /dev/mapper/mpatha
+    ignore_errors: True
+
+  - name: vgcreate
+    shell: vgcreate -Ay -cy cluster_vg /dev/mapper/mpatha
+    ignore_errors: True
+
+  - name: sleep 
+    command: sleep 20
+    
+  - name: lvcreate
+    become: yes
+    command: sudo lvcreate -L1500M -n cluster_lv cluster_vg
+    ignore_errors: True
+
+  - name: mkfs.gfs2
+    become: yes
+    shell: sudo echo y | sudo mkfs.gfs2 -j3 -p lock_dlm -t hacluster:gfs2 /dev/cluster_vg/cluster_lv
+    ignore_errors: True
+  
+  - name: create clusterfs
+    become: yes
+    shell: sudo pcs resource create clusterfs Filesystem device="/dev/cluster_vg/cluster_lv" directory="/mnt/gfs2" fstype="gfs2" "options=noatime" op monitor interval=10s on-fail=ignore clone interleave=true
+    
+  - name: constraint order
+    shell: pcs constraint order start clvmd-clone then clusterfs-clone
+
+  - name: colocation
+    shell: pcs constraint colocation add clusterfs-clone with clvmd-clone
+
+- name: install keepalived on node1-2
+  hosts: node1,node2
+  become: yes
+  tasks:
+  - name: install keepalived
+    yum:
+      name:
+        - keepalived
+      state: latest
+
+  - name: enable keepalived
+    service: 
+      name: keepalived
+      state: started 
+      enabled: yes
+
+  - name: Kernel on parameter for keepalived
+    shell: sysctl net.ipv4.ip_nonlocal_bind=1
+
+  - name: Configure keepalived on node1-2
+    template:
+        src: ./templates/keep_web.j2
+        dest: /etc/keepalived/keepalived.conf
+        owner: root
+        group: root
+        mode: 0644
+
+  - name: restart keepalived
+    shell: systemctl restart keepalived
+
+- name: install keepalived on node1-2
+  hosts: node2
+  become: yes
+  tasks:
+  - name: sleep 20
+    shell: sleep 20
+    
+  - name: restart keepalived
+    shell: systemctl restart keepalived
+# END ISCSI and KEEPALIVED
+
+
+#CONSUL
+- name: Set up Consul Cluster
+  hosts: db1,db2,iscsi
+  become: yes
+  tasks:
+  - name: Install centos-release-scl-rh
+    yum: 
+      name: 
+         - centos-release-scl-rh
+      state: latest
+
+  - name: install python-psycopg2
+    yum:
+      name:
+         - python3
+         - python-devel
+         - "@development-tools"
+      state: latest
+
+  #- firewalld:
+  #     port: 8300,8301,8302,8400,8500,8600/tcp
+  #     permanent: true
+  #     state: enabled
+
+  #- firewalld:
+  #     port: 8301,8302,8600/udp
+  #     permanent: true
+  #     state: enabled
+
+  #- name: firewalld reload
+  #  shell: firewall-cmd --reload
+  #- name: Upgrade pip
+  #  pip:
+   #   name: pip3
+      #executable: pip3
+ #     state: latest
+
+  - name: upd pip
+    shell: python3 -m pip install --upgrade pip
+
+  - name: Install python packages
+    shell: pip3 install  python-consul psycopg2-binary patroni[consul]
+
+  - name: Install Consul
+    unarchive:
+      src: https://releases.hashicorp.com/consul/1.9.4/consul_1.9.4_linux_amd64.zip
+      dest: /usr/bin/
+      remote_src: yes
+  
+  - name: Create Consul user, group
+    shell: | 
+       groupadd --system consul
+       useradd -s /sbin/nologin --system -g consul consul
+    ignore_errors: True
+
+  - name: Create folder for consul
+    shell: mkdir -p /var/lib/consul /etc/consul.d  /etc/consul.d/log
+    ignore_errors: True
+  
+  - name: copy consul.service
+    copy:
+       src: ./config/consul.service
+       dest: /etc/systemd/system/consul.service
+       owner: consul
+       group: consul
+       mode: 0644
+    ignore_errors: yes 
+
+- name: Set up Consul Cluster on iscsi server
+  hosts: iscsi
+  become: yes
+  tasks:
+  - name: Copying config leader_server
+    template:
+      src: config.mainserver.json.j2
+      dest: /etc/consul.d/config.json
+
+- name: Set up Consul Cluster
+  hosts: db1,db2
+  become: yes
+  tasks:
+  - name: Copying config consul server
+    template:
+      src: config.server.json.j2
+      dest: /etc/consul.d/config.json
+      
+
+- name: Set up Consul Cluster
+  hosts: iscsi,db1,db2
+  become: yes
+  serial: 1
+  tasks:
+  - name: chown and chmod folders
+    shell: |
+        chown -R consul:consul /var/lib/consul 
+        chown -R consul:consul /etc/consul.d
+        chown -R consul:consul /etc/consul.d/log
+        chmod -R 775 /var/lib/consul /etc/consul.d /etc/consul.d/log
+  
+  - name: start consul daemon
+    systemd:
+        state: restarted
+        name: consul
+        enabled: yes
+  
+  - name: sleep 10
+    shell: sleep 10
+
+#END CONSUL
+
+
+# POSTGRESQL
+- name: Set up Consul Client
+  hosts: db1,db2
+  become: yes
+  tasks:
+  - name: Add repository for postgresql
+    yum_repository:
+      name: epel-release
+      description: PostgreSQL YUM repo
+      file: external_repos
+      baseurl: https://download.postgresql.org/pub/repos/yum/12/redhat/rhel-7-x86_64
+      gpgkey: https://download.postgresql.org/pub/repos/yum/RPM-GPG-KEY-PGDG-12
+      gpgcheck: yes
+      enabled: yes
+      state: present
+
+  - name: install postgresql
+    yum:
+      name:
+        - yum-utils
+        - postgresql12
+        - postgresql12-server
+        - postgresql12-contrib
+
+  - name: Ensure PostgreSQL Python libraries are installed
+    yum:
+      name: 
+        - python-psycopg2
+        - python-pycurl
+        - glibc-common
+        - libselinux-python
+      state: present
+      update_cache: yes
+
+  - name: stop postgresql
+    service:
+      name: postgresql-12
+      state: stopped
+      enabled: false
+
+# END POSTGRESQL
+
+#PATRONI
+  - name: Create patroni directories
+    file:
+      path: "{{ item }}"
+      state: directory
+      owner: postgres
+      group: postgres
+      mode: 0700
+    with_items:
+          - /etc/patroni/
+          - /var/data/base
+
+  - name: Copy patroni.yml
+    template:
+      src: patroni.yml.j2
+      dest: /etc/patroni/patroni.yml
+
+  - name: Copy patroni.service
+    template:
+       src: patroni.service.j2
+       dest: /etc/systemd/system/patroni.service
+
+  - name: check owner patroni dir
+    file:
+      path: /etc/patroni/
+      recurse: yes
+      owner: postgres
+      group: postgres
+
+  - name: sleep 10
+    shell: sleep 10
+
+  #- name: Ensure PostgreSQL database is initialized
+  #  shell: postgresql-12-setup initdb
+  # ignore_errors: true
+
+  - name: Start patroni cluster
+    systemd:
+      name: patroni
+      state: started
+      daemon_reload: true
+      enabled: true
+
+#END PATRONI
+
+#CONSUL-CLIENT
+- name: Set up Consul Client
+  hosts: node1,node2
+  become: yes
+  tasks:
+  - name: Linux | Create User
+    user:
+      name: consul
+      password: ''
+      shell: /bin/bash
+
+  - name: create and ownership Consul dir
+    file:
+      path: "{{ item }}"
+      state: directory
+      owner: consul
+      group: consul
+    with_items:
+      - "/etc/consul.d/"
+      - "/var/consul"
+     
+  - name: Install Consul
+    unarchive:
+      src: https://releases.hashicorp.com/consul/1.9.4/consul_1.9.4_linux_amd64.zip
+      dest: /usr/bin/
+      remote_src: yes
+
+  - name: copying config consul
+    template:
+      src: config_client_json.j2
+      dest: "/etc/consul.d/config.json"
+
+  - name: copying service consul file
+    template:
+      src: consul_client.service.j2
+      dest: "/etc/systemd/system/consul.service"
+
+  - name: enable Consul
+    service:
+      name: consul
+      state: restarted
+      enabled: true
+
+# END CONSUL-CLIENT
+
+#PGBOUNCER
+  - name: install pgbouncer
+    yum:
+      name: pgbouncer
+      state: latest
+
+  - name: create postgres user
+    user:
+      name: postgres
+      password: ''
+      shell: /bin/bash
+      
+  - name: create dir for pgbouncer
+    file:
+      path: /etc/pgbouncer
+      state: directory
+      owner: postgres
+      group: postgres
+
+  #- name: chmod /var/log/pgbouncer
+  #  shell: chmod 755 /var/log/pgbouncer
+
+  #- name: create pgbouncer.ini
+  #  template:
+  #    src: ./templates/pgbouncer.ini.j2
+  #    dest: "/etc/pgbouncer/pgbouncer.ini"
+
+  - name: edit userlist.txt
+    template:
+      src: ./templates/userlist.txt.j2
+      dest: "/etc/pgbouncer/userlist.txt"
+
+  #- name: reload pgbouncer
+  #  service:
+  #    name: pgbouncer
+  #    state: reloaded
+  
+#END PGBOUNCER
+
+#CONSUL-TEMPLATE
+  - name: create dir for consul-template
+    file: 
+       path: "{{ item }}"
+       state: directory
+       owner: consul
+       group: consul
+    with_items:
+      - /etc/consul-template.d/
+      - /var/consul-template
+
+  - name: download and extract Consul
+    unarchive:
+      src: "https://releases.hashicorp.com/consul-template/0.25.2/consul-template_0.25.2_linux_amd64.zip"
+      dest: "/usr/bin/"
+      remote_src: yes
+
+  - name: copying config consul-tmpl file
+    copy:
+      src: ./config/consul-template.hcl
+      dest: /etc/consul-template.d/consul-template.hcl
+
+  - name: copying config pg_bouncer_consul-tmpl file
+    template:
+      src: pgbouncer.ctmpl.j2
+      dest: /etc/consul-template.d/pgbouncer.ctmpl
+
+  - name: copying service consul file
+    template:
+      src: consul-template.service.j2
+      dest: /etc/systemd/system/consul-template.service
+
+  - name: start consul-template
+    systemd:
+      name: consul-template.service
+      state: started
+      enabled: true
+
+  - name: restart pgbouncer
+    systemd:
+      name: pgbouncer
+      state: started
+
+  #END-CONSUL TEMPLATE
+
+# Create DB and users 
+- name: Create DB and users
+  hosts: node1
+  become: yes
+  tasks:
+  - name: Add repository for postgresql
+    yum_repository:
+      name: epel-release
+      description: PostgreSQL YUM repo
+      file: external_repos
+      baseurl: https://download.postgresql.org/pub/repos/yum/12/redhat/rhel-7-x86_64
+      gpgkey: https://download.postgresql.org/pub/repos/yum/RPM-GPG-KEY-PGDG-12
+      gpgcheck: yes
+      enabled: yes
+      state: present
+
+  - name: install postgresql
+    yum:
+      name:
+        - yum-utils
+        - postgresql12
+
+  - name: Create Nexcloud DB
+    postgresql_db:
+      login_host: localhost
+      login_user: postgres
+      login_password: postgres
+      port: 5432
+      name: nextcloud
+      encoding: UTF-8
+      template: template0
+      state: present
+    
+  - name: Create user nextcloud
+    postgresql_user:
+      login_user: postgres
+      login_password: postgres
+      login_host: localhost
+      name: nextcloud
+      password: nextcloud
+      db: nextcloud
+      priv: "ALL"
+
+# End create db and user  
+
+# Install Nginx and php-fpm, Nextcloud
+- name: nginx and php-fpm
+  hosts: node1,node2
+  become: yes
+  tasks:
+  - name: install nginx and php-repo
+    yum:
+      name:
+        - epel-release
+        - nginx
+        - yum-utils
+      state: present
+  
+  - name: install epel-release, yum-utils
+    yum:
+      name: http://rpms.remirepo.net/enterprise/remi-release-7.rpm
+      state: latest
+
+  - name: enable remi-php7.4
+    shell: yum-config-manager --enable remi-php74 
+
+  - name: enable and stop nginx
+    systemd:
+      state: stopped
+      enabled: yes
+      name: nginx
+
+  - name: install php-fpm
+    shell: yum -y install php php-fpm php-opcache php-xml php-xmlrpc php-gd php-mbstring php-json php-zip  php-pgsql php-intl php-process php-bcmath php-bz2 php-common php-curl php-gmp php-imagick memcached php-memcached
+
+  - name: php-fpm stop
+    service:
+      name: php-fpm
+      state: stopped
+
+  - name: copy nginx.conf
+    copy:
+       src: ./config/nginx.conf
+       dest: /etc/nginx/nginx.conf
+       owner: root
+       group: root
+       mode: 0644
+
+  - name: configure nextcloud for nginx
+    copy:
+       src: ./config/nextcloud.conf
+       dest: /etc/nginx/conf.d/nextcloud.conf
+       owner: root
+       group: root
+       mode: 0644
+
+  - name: configure php-fpm
+    copy:
+       src: ./config/www.conf
+       dest: /etc/php-fpm.d/www.conf
+       owner: root
+       group: root
+       mode: 0644
+
+  - name: Set owner /mnt/gfs2/nextcloud
+    file:
+        path: /mnt/gfs2/PHP
+        state: directory
+        recurse: yes
+        owner: nginx
+        group: nginx
+        mode: '775'
+
+  - name: enable and start php-fpm
+    systemd:
+      state: started
+      enabled: yes
+      name: php-fpm
+
+- name: Install nextcloud
+  hosts: node1
+  become: yes
+  tasks:
+  - name: Download and extract nextcloud
+    unarchive:
+      src: https://download.nextcloud.com/server/releases/latest.zip
+      dest: /mnt/gfs2/
+      owner: nginx
+      group: nginx
+      mode: 0755
+      remote_src: yes
+
+- name: restart nginx
+  hosts: node1,node2
+  become: yes
+  tasks:
+  - name: restart nginx
+    systemd:
+      state: restarted
+      daemon_reload: yes
+      name: nginx
+
+- name: Create resources
+  hosts: node1
+  become: yes
+  tasks: 
+  - name: tune cluster
+    shell: |
+      pcs resource create webserver ocf:heartbeat:nginx op monitor timeout="5s" interval="5s"
+      pcs resource create php74-php-fpm systemd:php74-php-fpm.service op monitor timeout="5s" interval="5s"
+      pcs resource create keepalived systemd:keepalived op monitor timeout="5s" interval="5s"
+      pcs constraint order set clusterfs-clone dlm-clone clvmd-clone keepalived php-fpm74 webserver
+      pcs constraint location php74-php-fpm prefers node1=20 node2=10
+      pcs constraint location webserver prefers node1=20 node2=10
+      pcs constraint location keepalived prefers node1=20 node2=10
+    ignore_errors: true
+
+- name: set up proxy pass
+  hosts: proxy
+  become: yes
+  tasks:
+  - name: install nginx
+    yum:
+      name: nginx
+      state: latest
+
+  - name: configure proxy_pass nginx
+    copy:
+       src: ./config/default
+       dest: /etc/nginx/nginx.conf
+       owner: root
+       group: root
+       mode: 0644
+
+  - name: restart nginx
+    systemd:
+      state: restarted
+      daemon_reload: yes
+      name: nginx
+
+# End Install Nginx and php-fpm, Nextcloud

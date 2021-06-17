@@ -1,0 +1,16 @@
+{
+    "server": false,
+    "advertise_addr": "{{ local_ip }}",
+    "bind_addr": "{{ local_ip }}",
+    "datacenter": "DC1",
+    "data_dir": "/var/consul",
+    "encrypt": "duhjAtj6qHQ33tUULSxrJa51lp2cWTDh9eFaIg14jXQ=",
+    "log_level": "INFO",
+    "enable_syslog": true,
+    "leave_on_terminate": true,
+    "start_join": [
+        "iscsi",
+        "db1",
+        "db2"
+    ]
+}

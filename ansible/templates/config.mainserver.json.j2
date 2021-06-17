@@ -1,0 +1,31 @@
+{
+     "advertise_addr": "{{ local_ip }}",
+     "bind_addr": "{{ local_ip }}",
+     "bootstrap_expect": 1,
+     "client_addr": "0.0.0.0",
+     "datacenter": "DC1",
+     "data_dir": "/var/lib/consul",
+     "domain": "consul.lan",
+     "enable_local_script_checks": true,
+     "enable_script_checks": true,
+     "enable_syslog": true,
+     "encrypt": "duhjAtj6qHQ33tUULSxrJa51lp2cWTDh9eFaIg14jXQ=",
+     "leave_on_terminate": true,
+     "rejoin_after_leave": true,
+     "retry_join": [
+         "iscsi",
+         "db1",
+         "db2"
+    ],
+     "server": true,
+     "start_join": [
+         "iscsi",
+         "db1",
+         "db2"
+    ],
+     "log_file": "/etc/consul.d/log/consul.log",
+     "log_level": "DEBUG",
+     "log_rotate_duration": "24h",
+     "ui": true
+}
+

@@ -1,0 +1,16 @@
+[Unit]
+Description=consul-template
+Requires=network-online.target
+After=network-online.target
+ConditionFileNotEmpty=/etc/consul-template.d/consul-template.hcl
+
+[Service]
+ExecStart=/usr/bin/consul-template -config=/etc/consul-template.d/consul-template.hcl
+ExecReload=/usr/bin/kill -s SIGHUP $MAINPID
+ExecStop=/usr/bin/kill -s SIGINT $MAINPID
+PIDFile=/etc/consul-template.d/consul_template.pid
+Restart=on-failure
+SuccessExitStatus=12 SIGINT
+
+[Install]
+WantedBy=multi-user.target
