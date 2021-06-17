@@ -15,7 +15,7 @@ resource "ah_cloud_server" "example" {
   image        = var.ah_image_type
   product      = var.ah_machine_type
   use_password = var.use_password
-  ssh_keys     = ["08:be:c7:62:fb:3c:b0:1f:3d:47:46:8c:8f:57:f2:8b"]
+  ssh_keys     = ["YOUR_SSH_KEY"]
   depends_on = [
     ah_private_network.example,
     ah_private_network.example2
